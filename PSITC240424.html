@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Queue-Based Ticket System</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; background: #f4f7f6; color: #333; }
+        h1, h2 { color: #2c3e50; }
+        .card { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        input, button { padding: 10px; margin: 5px 0; font-size: 14px; }
+        button { background: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #2980b9; }
+        .next-btn { background: #27ae60; }
+        .next-btn:hover { background: #1e8449; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { text-align: left; padding: 8px; border-bottom: 1px solid #ddd; vertical-align: top; }
+        th { background: #ecf0f1; }
+        ul { list-style: none; padding: 0; }
+        li { background: #ecf0f1; margin: 5px 0; padding: 10px; border-radius: 4px; }
+        li.front { border-left: 5px solid #27ae60; font-weight: bold; }
+        .stats { display: flex; gap: 20px; flex-wrap: wrap; }
+        .stat { flex: 1; min-width: 150px; background: #ecf0f1; padding: 12px; border-radius: 6px; text-align: center; }
+        .stat b { display: block; font-size: 24px; color: #2c3e50; }
+        #msg { color: #555; font-size: 14px; min-height: 20px; }
+        code { background: #ecf0f1; padding: 2px 5px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+    <h1>🎫 Queue-Powered Ticket System</h1>
+    <p>This page explains where <strong>queues</strong> are used in the real world, why they are necessary, and demonstrates one application: a bank / clinic ticket line built with a queue (First-In, First-Out).</p>
+
+    <!-- Part 1 -->
+    <div class="card">
+        <h2>1. Real-World Applications of Queues</h2>
+        <table>
+            <tr><th>Application</th><th>What waits in the queue</th><th>Why order matters</th></tr>
+            <tr><td>Print spooler</td><td>Print jobs</td><td>Documents print in the order submitted</td></tr>
+            <tr><td>CPU / OS scheduling</td><td>Processes ready to run</td><td>Each process gets a fair turn</td></tr>
+            <tr><td>Bank, clinic and call-center lines</td><td>Customers or calls</td><td>Served in arrival order</td></tr>
+            <tr><td>Network routers</td><td>Data packets</td><td>Packets are forwarded in order; a buffer absorbs bursts</td></tr>
+            <tr><td>Message brokers (Kafka, RabbitMQ)</td><td>Messages between services</td><td>Sender and receiver work at different speeds</td></tr>
+            <tr><td>Breadth-first search</td><td>Nodes to visit</td><td>Closest nodes are explored first</td></tr>
+            <tr><td>Keyboard buffer</td><td>Key presses</td><td>Characters must appear in the order typed</td></tr>
+            <tr><td>Video streaming</td><td>Data chunks</td><td>Played in the order received</td></tr>
+            <tr><td>Ride-hailing / delivery dispatch</td><td>Pending requests</td><td>Earlier requests are matched first</td></tr>
+        </table>
+    </div>
+
+    <!-- Part 2 -->
+    <div class="card">
+        <h2>2. Why Queues Are Necessary</h2>
+        <ul>
+            <li><strong>Fairness:</strong> FIFO guarantees first come, first served, so nobody is skipped.</li>
+            <li><strong>Different speeds:</strong> producers (users) and consumers (printer, server, clerk) work at different rates. The queue holds the backlog between them.</li>
+            <li><strong>Order preservation:</strong> typed characters, packets and transactions only make sense in sequence.</li>
+            <li><strong>Efficiency:</strong> enqueue and dequeue are fast operations at opposite ends, with no searching for the oldest item.</li>
+            <li><strong>Asynchronous work:</strong> a task is submitted now and processed later by a worker.</li>
+        </ul>
+        <p>A stack (last-in, first-out) would serve the newest customer first, which is the wrong behavior for all of the cases above.</p>
+    </div>
+
+    <!-- Part 3 -->
+    <div class="card">
+        <h2>3. Chosen Application: Bank / Clinic Ticket Queue</h2>
+        <p>Customers take a ticket and join the <strong>back</strong> of the line (<code>enqueue</code>). The clerk calls the person at the <strong>front</strong> (<code>dequeue</code>), who has waited longest. <code>peek</code> shows who is next, and <code>isEmpty</code> stops the clerk from calling when nobody is waiting.</p>
+        <input type="text" id="customerName" placeholder="Customer Name">
+        <button onclick="takeTicket()">Take Ticket (Enqueue)</button>
+        <button class="next-btn" onclick="callNext()">Call Next (Dequeue)</button>
+        <div id="msg"></div>
+    </div>
+
+    <div class="card">
+        <div class="stats">
+            <div class="stat">Now Serving<b id="nowServing">None</b></div>
+            <div class="stat">People Waiting<b id="queueSize">0</b></div>
+            <div class="stat">Average Wait (sec)<b id="avgWait">0</b></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Waiting Line (front first)</h2>
+        <ul id="queueList"></ul>
+    </div>
+
+    <div class="card">
+        <h2>Already Served</h2>
+        <ul id="servedList"></ul>
+    </div>
+
+    <script>
+        // MAIN DATA STRUCTURE: a Queue (First-In, First-Out) built on an array
+        class Queue {
+            constructor() { this.items = []; }
+            enqueue(item) { this.items.push(item); }        // add at the back
+            dequeue() { return this.items.shift(); }        // remove from the front
+            peek() { return this.items[0]; }                // look at the front
+            isEmpty() { return this.items.length === 0; }
+            size() { return this.items.length; }
+        }
+
+        const line = new Queue();
+        let ticketCounter = 0;
+        let served = [];
+        let waitTimes = [];
+
+        function setMsg(text) {
+            document.getElementById('msg').textContent = text;
+        }
+
+        function takeTicket() {
+            const input = document.getElementById('customerName');
+            const name = input.value.trim();
+            if (!name) {
+                alert("Please enter the customer's name.");
+                return;
+            }
+            ticketCounter++;
+            line.enqueue({ ticket: ticketCounter, name: name, arrived: Date.now() });
+            setMsg("Ticket #" + ticketCounter + " issued to " + name + ". People ahead: " + (line.size() - 1) + ".");
+            input.value = '';
+            input.focus();
+            renderApp();
+        }
+
+        function callNext() {
+            if (line.isEmpty()) {
+                setMsg("The queue is empty. Nobody to call.");
+                return;
+            }
+            const customer = line.dequeue();
+            const waited = Math.round((Date.now() - customer.arrived) / 1000);
+            waitTimes.push(waited);
+            served.unshift(customer);
+            document.getElementById('nowServing').textContent = "#" + customer.ticket + " " + customer.name;
+            setMsg("Calling #" + customer.ticket + " (" + customer.name + "). Waited " + waited + " seconds.");
+            renderApp();
+        }
+
+        function makeItem(text, className) {
+            const li = document.createElement('li');
+            li.textContent = text;   // textContent keeps typed names safe
+            if (className) li.className = className;
+            return li;
+        }
+
+        function renderApp() {
+            const queueList = document.getElementById('queueList');
+            queueList.innerHTML = '';
+            line.items.forEach((c, i) => {
+                const label = "#" + c.ticket + " " + c.name + (i === 0 ? "  (next up)" : "");
+                queueList.appendChild(makeItem(label, i === 0 ? 'front' : ''));
+            });
+            if (line.isEmpty()) queueList.appendChild(makeItem("No one is waiting."));
+
+            const servedList = document.getElementById('servedList');
+            servedList.innerHTML = '';
+            served.forEach(c => servedList.appendChild(makeItem("#" + c.ticket + " " + c.name)));
+            if (served.length === 0) servedList.appendChild(makeItem("No one served yet."));
+
+            document.getElementById('queueSize').textContent = line.size();
+            const avg = waitTimes.length ? waitTimes.reduce((s, w) => s + w, 0) / waitTimes.length : 0;
+            document.getElementById('avgWait').textContent = Math.round(avg);
+        }
+
+        document.getElementById('customerName').addEventListener('keydown', e => {
+            if (e.key === 'Enter') takeTicket();
+        });
+
+        renderApp();
+    </script>
+</body>
+</html>
